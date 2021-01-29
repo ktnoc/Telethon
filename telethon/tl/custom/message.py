@@ -1,16 +1,17 @@
-import abc
+from typing import Optional, List, TYPE_CHECKING
+from datetime import datetime
 from .chatgetter import ChatGetter
 from .sendergetter import SenderGetter
 from .messagebutton import MessageButton
 from .forward import Forward
 from .file import File
-from .. import TLObject, types, functions
+from .. import TLObject, types, functions, alltlobjects
 from ... import utils, errors
 
 
 # TODO Figure out a way to have the code generator error on missing fields
 # Maybe parsing the init function alone if that's possible.
-class Message(ChatGetter, SenderGetter, TLObject, abc.ABC):
+class _Message(ChatGetter, SenderGetter):
     """
     This custom class aggregates both :tl:`Message` and
     :tl:`MessageService` to ease accessing their members.
@@ -153,29 +154,47 @@ class Message(ChatGetter, SenderGetter, TLObject, abc.ABC):
 
     def __init__(
             # Common to all
-            self, id,
+            self, id: int,
 
             # Common to Message and MessageService (mandatory)
-            peer_id=None, date=None,
+            peer_id: types.TypePeer = None,
+            date: Optional[datetime] = None,
 
             # Common to Message and MessageService (flags)
-            out=None, mentioned=None, media_unread=None, silent=None,
-            post=None, from_id=None, reply_to=None,
+            out: Optional[bool] = None,
+            mentioned: Optional[bool] = None,
+            media_unread: Optional[bool] = None,
+            silent: Optional[bool] = None,
+            post: Optional[bool] = None,
+            from_id: Optional[types.TypePeer] = None,
+            reply_to: Optional[types.TypeMessageReplyHeader] = None,
 
             # For Message (mandatory)
-            message=None,
+            message: Optional[str] = None,
 
             # For Message (flags)
-            fwd_from=None, via_bot_id=None, media=None, reply_markup=None,
-            entities=None, views=None, edit_date=None, post_author=None,
-            grouped_id=None, from_scheduled=None, legacy=None,
-            edit_hide=None, pinned=None, restriction_reason=None,
-            forwards=None, replies=None,
+            fwd_from: Optional[types.TypeMessageFwdHeader] = None,
+            via_bot_id: Optional[int] = None,
+            media: Optional[types.TypeMessageMedia] = None,
+            reply_markup: Optional[types.TypeReplyMarkup] = None,
+            entities: Optional[List[types.TypeMessageEntity]] = None,
+            views: Optional[int] = None,
+            edit_date: Optional[datetime] = None,
+            post_author: Optional[str] = None,
+            grouped_id: Optional[int] = None,
+            from_scheduled: Optional[bool] = None,
+            legacy: Optional[bool] = None,
+            edit_hide: Optional[bool] = None,
+            pinned: Optional[bool] = None,
+            restriction_reason: Optional[types.TypeRestrictionReason] = None,
+            forwards: Optional[int] = None,
+            replies: Optional[types.TypeMessageReplies] = None,
 
             # For MessageAction (mandatory)
-            action=None):
+            action: Optional[types.TypeMessageAction] = None
+    ):
         # Common properties to messages, then to service (in the order they're defined in the `.tl`)
-        self.out = out
+        self.out = bool(out)
         self.mentioned = mentioned
         self.media_unread = media_unread
         self.silent = silent
@@ -216,6 +235,7 @@ class Message(ChatGetter, SenderGetter, TLObject, abc.ABC):
         self._via_bot = None
         self._via_input_bot = None
         self._action_entities = None
+        self._linked_chat = None
 
         sender_id = None
         if from_id is not None:
@@ -275,6 +295,11 @@ class Message(ChatGetter, SenderGetter, TLObject, abc.ABC):
                     self.action, types.MessageActionChannelMigrateFrom):
                 self._action_entities = [entities.get(utils.get_peer_id(
                     types.PeerChat(self.action.chat_id)))]
+
+        if self.replies and self.replies.channel_id:
+            self._linked_chat = entities.get(utils.get_peer_id(
+                    types.PeerChannel(self.replies.channel_id)))
+
 
     # endregion Initialization
 
@@ -1105,3 +1130,22 @@ class Message(ChatGetter, SenderGetter, TLObject, abc.ABC):
                     return None
 
     # endregion Private Methods
+
+def _patch(cls):
+    # Create new types (classes) for all messages to combine `_Message` in them.
+    # `_Message` comes first so we get its `__init__`.
+    newtype = type(cls.__name__, (_Message, cls), {})
+    setattr(types, cls.__name__, newtype)
+    # `BinaryReader` directly imports this dictionary, but we're mutating it
+    # in-place, not replacing it, so it works out to deserialize `newtype`.
+    alltlobjects.tlobjects[cls.CONSTRUCTOR_ID] = newtype
+    return newtype
+
+
+_patch(types.MessageEmpty)
+Message = _patch(types.Message)
+_patch(types.MessageService)
+
+
+if TYPE_CHECKING:
+    Message = _Message
